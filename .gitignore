@@ -1,0 +1,21 @@
+# Unreal Engine build artifacts
+Intermediate/
+Binaries/
+DerivedDataCache/
+Saved/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.VC.opendb
+
+# JetBrains Rider
+.idea/
+*.sln.DotSettings.user
+
+# macOS
+.DS_Store

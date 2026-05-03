@@ -1,0 +1,32 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Speech To Text",
+	"Description": "Captures microphone input and transcribes Vietnamese speech to text using OpenAI Whisper API",
+	"Category": "Audio",
+	"CreatedBy": "VR_Demo",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Modules": [
+		{
+			"Name": "SpeechToText",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "AudioCapture",
+			"Enabled": true
+		},
+		{
+			"Name": "RuntimeAudioImporter",
+			"Enabled": true
+		},
+		{
+			"Name": "NPCConversation",
+			"Enabled": true
+		}
+	]
+}
