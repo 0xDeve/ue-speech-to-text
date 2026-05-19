@@ -199,6 +199,11 @@ private:
 	bool bDirectAudioStreamActive = false;
 	float LazyStreamOpenRetryTimer = 0.0f;
 
+	// The NPC that currently owns the open audio session. Tracked separately from
+	// the resolved target so that when the player switches NPCs we can close the
+	// session on the *original* NPC instead of mis-routing EndAudioInput / chunks.
+	TWeakObjectPtr<UNPCConversationComponent> CurrentStreamNPC;
+
 	/** Convert float samples [-1.0, 1.0] to 16-bit PCM bytes. */
 	static TArray<uint8> ConvertFloatToPCM16(const TArray<float>& FloatSamples);
 

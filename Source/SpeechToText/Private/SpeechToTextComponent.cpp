@@ -34,11 +34,25 @@ void USpeechToTextComponent::BeginPlay()
 	AppReactivatedHandle = FCoreDelegates::ApplicationHasReactivatedDelegate.AddUObject(
 		this, &USpeechToTextComponent::OnAppReactivated);
 
-	// Auto-enable hands-free mode if configured in project settings
+	// Auto-enable hands-free mode if configured in project settings.
+	// If the owner is a pawn, only auto-activate when it's the locally-controlled player —
+	// otherwise every AI/crowd NPC that happens to inherit this component would spawn its
+	// own audio capture and fight for the microphone. Non-pawn owners (e.g. manager actors)
+	// keep the original behavior.
 	const USpeechToTextSettings* Settings = USpeechToTextSettings::Get();
 	if (Settings && Settings->bDefaultHandsFreeMode)
 	{
-		EnableHandsFreeMode();
+		const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+		const bool bSkipForRemotePawn = OwnerPawn && !(OwnerPawn->IsLocallyControlled() && OwnerPawn->IsPlayerControlled());
+		if (!bSkipForRemotePawn)
+		{
+			EnableHandsFreeMode();
+		}
+		else
+		{
+			UE_LOG(LogTemp, Verbose, TEXT("SpeechToText: Skipping auto hands-free on '%s' — owner is not locally-controlled player pawn"),
+				*OwnerPawn->GetName());
+		}
 	}
 }
 
@@ -46,14 +60,17 @@ void USpeechToTextComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	FCoreDelegates::ApplicationHasReactivatedDelegate.Remove(AppReactivatedHandle);
 
-	// End direct audio stream if active
+	// End direct audio stream if active. Route to the NPC that *owns* the open
+	// session, not whichever NPC is currently resolved — the target may have
+	// switched since the stream opened.
 	if (bDirectAudioStreamActive)
 	{
-		if (UNPCConversationComponent* NPC = ResolveTargetNPC())
+		if (UNPCConversationComponent* NPC = CurrentStreamNPC.Get())
 		{
 			NPC->EndAudioInput();
 		}
 		bDirectAudioStreamActive = false;
+		CurrentStreamNPC = nullptr;
 	}
 
 	if (bHandsFreeMode)
@@ -103,6 +120,30 @@ void USpeechToTextComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 	// Energy-based VAD for hands-free mode
 	if (bHandsFreeMode && CaptureHandler)
 	{
+		// Target NPC may switch at runtime (gaze/proximity selection). If our open
+		// session belongs to a different NPC than the one we now resolve to, close
+		// the old session so the lazy-open below (or speech-onset path) can reopen
+		// on the new target. Without this, chunks keep flowing to the new NPC whose
+		// bDirectAudioInputActive is false, producing SendAudioInputChunk warning spam.
+		if (bStreamDirectAudio && bDirectAudioStreamActive)
+		{
+			UNPCConversationComponent* Resolved = ResolveTargetNPC();
+			UNPCConversationComponent* StreamingNPC = CurrentStreamNPC.Get();
+			if (Resolved != StreamingNPC)
+			{
+				if (StreamingNPC)
+				{
+					// Pass bAwaitReply=false: we're abandoning this NPC, not asking
+					// the user's "I'm done talking" prompt. Without this, the NPC
+					// would lock into WaitingForReply and reject our return visit.
+					StreamingNPC->EndAudioInput(/*bAwaitReply=*/false);
+				}
+				bDirectAudioStreamActive = false;
+				CurrentStreamNPC = nullptr;
+				UE_LOG(LogTemp, Log, TEXT("SpeechToText: Target NPC changed — closed previous audio stream, will reopen on new target"));
+			}
+		}
+
 		// Server-VAD-only mode: lazily open the direct-audio stream when the NPC becomes
 		// resolvable. Doing this in tick covers late-binding cases (NPC spawned after STT,
 		// TargetNPCConversation set by gaze/proximity, WebSocket pool not ready at BeginPlay).
@@ -113,6 +154,7 @@ void USpeechToTextComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 				if (NPC->StartAudioInput(/*bForceServerVAD=*/true))
 				{
 					bDirectAudioStreamActive = true;
+					CurrentStreamNPC = NPC;
 					ResetResamplerState();
 					CaptureHandler->NotifySpeechStarted();
 					RecordingTimer = 0.0f;
@@ -244,6 +286,7 @@ void USpeechToTextComponent::ProcessEnergyVAD(float DeltaTime)
 						if (NPC->StartAudioInput())
 						{
 							bDirectAudioStreamActive = true;
+							CurrentStreamNPC = NPC;
 							ResetResamplerState();
 							UE_LOG(LogTemp, Log, TEXT("SpeechToText: Started direct audio stream to NPC"));
 						}
@@ -457,14 +500,17 @@ void USpeechToTextComponent::DisableHandsFreeMode()
 	ConsecutiveSpeechMs = 0.0f;
 	ConsecutiveSilenceMs = 0.0f;
 
-	// End direct audio stream if active
+	// End direct audio stream if active. Route to the NPC that *owns* the open
+	// session, not whichever NPC is currently resolved — the target may have
+	// switched since the stream opened.
 	if (bDirectAudioStreamActive)
 	{
-		if (UNPCConversationComponent* NPC = ResolveTargetNPC())
+		if (UNPCConversationComponent* NPC = CurrentStreamNPC.Get())
 		{
 			NPC->EndAudioInput();
 		}
 		bDirectAudioStreamActive = false;
+		CurrentStreamNPC = nullptr;
 	}
 
 	if (CaptureHandler)
