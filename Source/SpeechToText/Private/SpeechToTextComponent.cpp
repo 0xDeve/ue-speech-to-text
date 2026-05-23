@@ -140,7 +140,28 @@ void USpeechToTextComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 				}
 				bDirectAudioStreamActive = false;
 				CurrentStreamNPC = nullptr;
-				UE_LOG(LogTemp, Log, TEXT("SpeechToText: Target NPC changed — closed previous audio stream, will reopen on new target"));
+
+				// Drop out of Recording — without this the component stays "active"
+				// even though audio has nowhere to go, and the lazy-open below spams
+				// "Still waiting" every 3s while VAD keeps capturing.
+				if (CurrentState == ESpeechToTextState::Recording)
+				{
+					CaptureHandler->NotifySpeechEnded();
+					bEnergyVADSpeechActive = false;
+					ConsecutiveSpeechMs = 0.0f;
+					ConsecutiveSilenceMs = 0.0f;
+					SetState(ESpeechToTextState::Listening);
+				}
+
+				if (Resolved)
+				{
+					UE_LOG(LogTemp, Log, TEXT("SpeechToText: Target NPC changed — closed previous audio stream, will reopen on new target"));
+				}
+				else
+				{
+					UE_LOG(LogTemp, Log, TEXT("SpeechToText: Target NPC lost — closed audio stream, returning to Listening"));
+					bHasLoggedTargetMissing = true; // suppress redundant lazy-open log on next tick
+				}
 			}
 		}
 
@@ -151,6 +172,7 @@ void USpeechToTextComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		{
 			if (UNPCConversationComponent* NPC = ResolveTargetNPC())
 			{
+				bHasLoggedTargetMissing = false;
 				if (NPC->StartAudioInput(/*bForceServerVAD=*/true))
 				{
 					bDirectAudioStreamActive = true;
@@ -173,14 +195,12 @@ void USpeechToTextComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 					}
 				}
 			}
-			else
+			else if (!bHasLoggedTargetMissing)
 			{
-				LazyStreamOpenRetryTimer += DeltaTime;
-				if (LazyStreamOpenRetryTimer >= 3.0f)
-				{
-					LazyStreamOpenRetryTimer = 0.0f;
-					UE_LOG(LogTemp, Warning, TEXT("SpeechToText: Still waiting for target NPC — set TargetNPCConversation or place NPC on same actor/player pawn"));
-				}
+				// Log once when entering "no target" state, not every 3s. The flag
+				// resets above when a target is resolved, so a future loss re-logs.
+				bHasLoggedTargetMissing = true;
+				UE_LOG(LogTemp, Log, TEXT("SpeechToText: No target NPC — direct-audio stream idle until TargetNPCConversation is set or NPC comes into range"));
 			}
 		}
 

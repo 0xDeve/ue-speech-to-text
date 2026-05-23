@@ -198,6 +198,7 @@ private:
 	// Direct audio streaming state
 	bool bDirectAudioStreamActive = false;
 	float LazyStreamOpenRetryTimer = 0.0f;
+	bool bHasLoggedTargetMissing = false;
 
 	// The NPC that currently owns the open audio session. Tracked separately from
 	// the resolved target so that when the player switches NPCs we can close the
