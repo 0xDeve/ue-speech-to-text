@@ -129,7 +129,30 @@ void USpeechToTextComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 		{
 			UNPCConversationComponent* Resolved = ResolveTargetNPC();
 			UNPCConversationComponent* StreamingNPC = CurrentStreamNPC.Get();
-			if (Resolved != StreamingNPC)
+
+			// Self-heal: the NPC that owned the open session may have had it torn down out
+			// from under us — its NPCBrain ended the conversation and released the GeminiLive
+			// connection (the brain's disengage range is smaller than our gaze-targeting
+			// range), the socket dropped, or the crowd actor was destroyed by distance LOD.
+			// The resolved target often hasn't changed, so the switch path below won't fire —
+			// without this we stream mic chunks into a dead session forever ("no audio input
+			// session active" spam) and never recover. Close the local stream so the lazy-open
+			// re-establishes (on the same NPC if still in range, or the next one).
+			if (!StreamingNPC || !StreamingNPC->IsDirectAudioSessionLive())
+			{
+				bDirectAudioStreamActive = false;
+				CurrentStreamNPC = nullptr;
+				if (CurrentState == ESpeechToTextState::Recording)
+				{
+					CaptureHandler->NotifySpeechEnded();
+					bEnergyVADSpeechActive = false;
+					ConsecutiveSpeechMs = 0.0f;
+					ConsecutiveSilenceMs = 0.0f;
+					SetState(ESpeechToTextState::Listening);
+				}
+				UE_LOG(LogTemp, Log, TEXT("SpeechToText: Stream NPC's direct-audio session is no longer live (brain disengage / connection drop / actor LOD) — closed local stream, will reopen when a target is resolvable"));
+			}
+			else if (Resolved != StreamingNPC)
 			{
 				if (StreamingNPC)
 				{
